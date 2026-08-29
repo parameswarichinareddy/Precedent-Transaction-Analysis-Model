@@ -1,0 +1,61 @@
+name: Validate PTA Model
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install workbook validation dependency
+        run: pip install openpyxl
+
+      - name: Validate PTA workbook
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from openpyxl import load_workbook
+
+          files = list(Path('models').glob('*.xlsx'))
+          if not files:
+              raise SystemExit('No .xlsx model found in models/')
+
+          required = {
+              'Dashboard', 'Transaction Overview', 'Target Financials',
+              'Target Capitalization', 'Precedent Transactions',
+              'Transaction Multiples', 'Premium Analysis', 'PTA Valuation',
+              'Sensitivity Analysis', 'Football Field', 'Transaction Screening',
+              'Sources & Checks'
+          }
+
+          for path in files:
+              print(f'Checking {path}')
+              wb = load_workbook(path, read_only=True, data_only=False)
+              sheets = set(wb.sheetnames)
+              missing = required - sheets
+              if missing:
+                  raise SystemExit(f'Missing worksheets in {path.name}: {sorted(missing)}')
+
+              errors = []
+              for ws in wb.worksheets:
+                  for row in ws.iter_rows():
+                      for cell in row:
+                          if isinstance(cell.value, str) and cell.value in {'#REF!', '#DIV/0!', '#VALUE!', '#NAME?', '#N/A'}:
+                              errors.append(f'{ws.title}!{cell.coordinate}={cell.value}')
+              if errors:
+                  raise SystemExit('Excel errors found:\n' + '\n'.join(errors[:50]))
+
+              print(f'PASS: {path.name} ({len(wb.sheetnames)} worksheets)')
+          PY
